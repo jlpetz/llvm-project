@@ -4,6 +4,7 @@
 declare void @sync_call()
 declare void @nosync_call() nosync
 declare void @nosync_nounwind_call() nosync nounwind
+declare void @readnone_nounwind_call() memory(none) nounwind
 declare void @llvm.x86.sse.sfence()
 declare void @llvm.x86.sse2.mfence()
 declare i32 @__gxx_personality_v0(...)
@@ -380,6 +381,61 @@ cs_bb:
 catch_bb:
   %cp = catchpad within %cs []
   catchret from %cp to label %cont
+}
+
+; Monotonic atomics can't publish earlier stores on their own, so a relaxed
+; progress counter doesn't put a fence in the loop: one fence at the exit.
+define void @test_loop_monotonic(ptr %p, i32 %v, ptr %ctr, i32 %n) {
+; CHECK-LABEL: @test_loop_monotonic(
+; CHECK:       loop:
+; CHECK-NOT:     sfence
+; CHECK:         br i1
+; CHECK:       exit:
+; CHECK-NEXT:    call void @llvm.x86.sse.sfence()
+; CHECK-NEXT:    ret void
+;
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %a = getelementptr i32, ptr %p, i32 %i
+  store i32 %v, ptr %a, align 4, !nontemporal !0
+  store atomic i32 %i, ptr %ctr monotonic, align 4
+  %old = atomicrmw add ptr %ctr, i32 1 monotonic, align 4
+  %ok = cmpxchg ptr %ctr, i32 0, i32 1 monotonic monotonic, align 4
+  %i.next = add i32 %i, 1
+  %done = icmp eq i32 %i.next, %n
+  br i1 %done, label %exit, label %loop
+
+exit:
+  ret void
+}
+
+; A call that doesn't access memory can't synchronize either.
+define void @test_loop_readnone_call(ptr %p, i32 %v, i32 %n) {
+; CHECK-LABEL: @test_loop_readnone_call(
+; CHECK:       loop:
+; CHECK-NOT:     sfence
+; CHECK:         br i1
+; CHECK:       exit:
+; CHECK-NEXT:    call void @llvm.x86.sse.sfence()
+; CHECK-NEXT:    ret void
+;
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %a = getelementptr i32, ptr %p, i32 %i
+  store i32 %v, ptr %a, align 4, !nontemporal !0
+  call void @readnone_nounwind_call()
+  %i.next = add i32 %i, 1
+  %done = icmp eq i32 %i.next, %n
+  br i1 %done, label %exit, label %loop
+
+exit:
+  ret void
 }
 
 ; A cleanupret that unwinds to a catchswitch gets its fence inside the cleanup

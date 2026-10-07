@@ -73,13 +73,38 @@ static bool isNonTemporalFence(const Instruction &I) {
 /// Returns true if I is a potential cross-thread synchronization point, or
 /// which might return to a caller (either via return or throwing).
 ///
+/// Returns true if I may give another thread a synchronizes-with edge that
+/// makes this thread's earlier stores visible to it. This is
+/// Instruction::maySynchronize, except that monotonic (and unordered) atomics
+/// don't count, since on their own they can't do that (it takes a fence or a
+/// release operation, and those still count), and neither do calls that don't
+/// access memory.
+static bool mayPublishStores(const Instruction &I) {
+  if (const auto *CB = dyn_cast<CallBase>(&I))
+    if (CB->doesNotAccessMemory())
+      return false;
+  AtomicOrdering Ordering = AtomicOrdering::NotAtomic;
+  if (const auto *LI = dyn_cast<LoadInst>(&I))
+    Ordering = LI->getOrdering();
+  else if (const auto *SI = dyn_cast<StoreInst>(&I))
+    Ordering = SI->getOrdering();
+  else if (const auto *RMW = dyn_cast<AtomicRMWInst>(&I))
+    Ordering = RMW->getOrdering();
+  else if (const auto *CX = dyn_cast<AtomicCmpXchgInst>(&I))
+    Ordering = CX->getMergedOrdering();
+  if (Ordering != AtomicOrdering::NotAtomic &&
+      !isStrongerThanMonotonic(Ordering))
+    return false;
+  return I.maySynchronize();
+}
+
 /// InvokeInst and CleanupReturnInst are handled as special cases, because
 /// I.mayThrow() may return false for them, yet true for a CatchSwitchInst
 /// unwind destination, which cannot have non-PHI instructions preceding it.
 /// Fencing before the unwinding terminator keeps the catchswitch block clean.
 static bool isSyncOrReturnPoint(const Instruction &I) {
   return isa<ReturnInst, InvokeInst, CleanupReturnInst>(&I) ||
-         I.maySynchronize() || I.mayThrow();
+         mayPublishStores(I) || I.mayThrow();
 }
 
 static bool containsNonTemporalStores(Function &F) {
