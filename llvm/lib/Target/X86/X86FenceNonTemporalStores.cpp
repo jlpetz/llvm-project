@@ -33,9 +33,12 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CFG.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -44,6 +47,7 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
+#include <optional>
 
 using namespace llvm;
 
@@ -194,6 +198,17 @@ static bool runImpl(Function &F, const X86Subtarget *ST) {
   bool Changed = false;
   IRBuilder<> Builder(F.getContext());
 
+  // A remark per fence names the instruction that needed it and says when it
+  // is inside a loop, where an sfence per iteration is expensive. Loop info is
+  // only computed when remarks are enabled for this pass.
+  OptimizationRemarkEmitter ORE(&F);
+  std::optional<DominatorTree> DT;
+  std::optional<LoopInfo> LI;
+  if (ORE.allowExtraAnalysis(DEBUG_TYPE)) {
+    DT.emplace(F);
+    LI.emplace(*DT);
+  }
+
   for (BasicBlock &BB : F) {
     bool CurrentDirty = Flags[&BB] & DirtyIn;
     for (Instruction &I : llvm::make_early_inc_range(BB)) {
@@ -206,6 +221,22 @@ static bool runImpl(Function &F, const X86Subtarget *ST) {
           Builder.SetInsertPoint(&I);
           Builder.SetCurrentDebugLocation(I.getDebugLoc());
           Builder.CreateIntrinsic(Intrinsic::x86_sse_sfence, {});
+          ORE.emit([&]() {
+            OptimizationRemark R(DEBUG_TYPE, "SFenceInserted", &I);
+            R << "inserted sfence before ";
+            if (const auto *CB = dyn_cast<CallBase>(&I)) {
+              if (const Function *Callee = CB->getCalledFunction())
+                R << "call to " << ore::NV("Callee", Callee);
+              else
+                R << (CB->isInlineAsm() ? "inline asm" : "indirect call");
+            } else {
+              R << ore::NV("Inst", I.getOpcodeName());
+            }
+            R << " to order earlier non-temporal stores";
+            if (LI && LI->getLoopFor(&BB))
+              R << "; it is inside a loop, so it can run on every iteration";
+            return R;
+          });
           CurrentDirty = false;
           Changed = true;
         }

@@ -1,5 +1,6 @@
 ; RUN: opt -mtriple=x86_64-unknown-unknown -passes=x86-fence-nontemporal-stores -S < %s | FileCheck %s
 ; RUN: opt -mtriple=i386-unknown-unknown -mattr=-sse -passes=x86-fence-nontemporal-stores -S < %s | FileCheck %s --check-prefix=CHECK-NOSSE
+; RUN: opt -mtriple=x86_64-unknown-unknown -passes=x86-fence-nontemporal-stores -pass-remarks=x86-fence-nontemporal-stores -disable-output < %s 2>&1 | FileCheck %s --check-prefix=REMARK
 
 declare void @sync_call()
 declare void @nosync_call() nosync
@@ -10,6 +11,7 @@ declare void @llvm.x86.sse2.mfence()
 declare i32 @__gxx_personality_v0(...)
 declare i32 @__CxxFrameHandler3(...)
 
+; REMARK: remark: <unknown>:0:0: inserted sfence before ret to order earlier non-temporal stores{{$}}
 define void @test_simple_ret(ptr %p, i32 %v) {
 ; CHECK-LABEL: @test_simple_ret(
 ; CHECK-NEXT:    store i32 [[V:%.*]], ptr [[P:%.*]], align 4, !nontemporal [[META0:![0-9]+]]
@@ -41,6 +43,7 @@ define void @test_multiple_stores(ptr %p, i32 %v1, i32 %v2) {
   ret void
 }
 
+; REMARK: remark: <unknown>:0:0: inserted sfence before call to sync_call to order earlier non-temporal stores{{$}}
 define void @test_call_sync(ptr %p, i32 %v) {
 ; CHECK-LABEL: @test_call_sync(
 ; CHECK-NEXT:    store i32 [[V:%.*]], ptr [[P:%.*]], align 4, !nontemporal [[META0]]
@@ -430,6 +433,31 @@ loop:
   %a = getelementptr i32, ptr %p, i32 %i
   store i32 %v, ptr %a, align 4, !nontemporal !0
   call void @readnone_nounwind_call()
+  %i.next = add i32 %i, 1
+  %done = icmp eq i32 %i.next, %n
+  br i1 %done, label %exit, label %loop
+
+exit:
+  ret void
+}
+
+; The remark says when a fence lands inside a loop.
+; REMARK: remark: <unknown>:0:0: inserted sfence before call to sync_call to order earlier non-temporal stores; it is inside a loop, so it can run on every iteration
+define void @test_loop_sync_call(ptr %p, i32 %v, i32 %n) {
+; CHECK-LABEL: @test_loop_sync_call(
+; CHECK:       loop:
+; CHECK:         store i32 [[V:%.*]], ptr [[A:%.*]], align 4, !nontemporal [[META0]]
+; CHECK-NEXT:    call void @llvm.x86.sse.sfence()
+; CHECK-NEXT:    call void @sync_call()
+;
+entry:
+  br label %loop
+
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %loop ]
+  %a = getelementptr i32, ptr %p, i32 %i
+  store i32 %v, ptr %a, align 4, !nontemporal !0
+  call void @sync_call()
   %i.next = add i32 %i, 1
   %done = icmp eq i32 %i.next, %n
   br i1 %done, label %exit, label %loop
