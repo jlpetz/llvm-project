@@ -1,29 +1,30 @@
-//===-- X86FenceNonTemporalStores.cpp - Fence Non-Temporal Stores ---------===//
+//===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-//
-// Non-temporal store instructions in LLVM IR (!nontemporal metadata) are
-// documented as optimization hints. However, on X86, regular stores follow the
-// TSO (Total Store Order) memory model, whereas non-temporal stores (MOVNT*)
-// write to weakly-ordered write-combining (WC) memory buffers that bypass cache
-// hierarchies.
-//
-// Without explicit memory fences, write-combining stores are not ordered with
-// respect to other WC stores or normal WB stores. As a result, cross-thread
-// synchronization that follows a non-temporal store may allow other threads to
-// observe out-of-order writes, unless an SFENCE is executed.
-//
-// This pass performs forward dataflow analysis to insert `llvm.x86.sse.sfence`
-// intrinsics between non-temporal stores and subsequent potential
-// synchronization points (such as atomic operations, function calls, exception
-// unwinding, and function returns), guaranteeing that weakly-ordered
-// non-temporal stores are serialized before synchronization, while still
-// allowing the performance benefits of non-temporal stores in a loop.
-//
+///
+/// \file
+/// Non-temporal store instructions in LLVM IR (!nontemporal metadata) are
+/// documented as optimization hints. However, on X86, regular stores follow
+/// the TSO (Total Store Order) memory model, whereas non-temporal stores
+/// (MOVNT*) write to weakly-ordered write-combining (WC) memory buffers that
+/// bypass cache hierarchies.
+///
+/// Without explicit memory fences, write-combining stores are not ordered with
+/// respect to other WC stores or normal WB stores. As a result, cross-thread
+/// synchronization that follows a non-temporal store may allow other threads to
+/// observe out-of-order writes, unless an SFENCE is executed.
+///
+/// This pass performs forward dataflow analysis to insert `llvm.x86.sse.sfence`
+/// intrinsics between non-temporal stores and subsequent potential
+/// synchronization points (such as atomic operations, function calls, exception
+/// unwinding, and function returns), guaranteeing that weakly-ordered
+/// non-temporal stores are serialized before synchronization, while still
+/// allowing the performance benefits of non-temporal stores in a loop.
+///
 //===----------------------------------------------------------------------===//
 
 #include "X86.h"

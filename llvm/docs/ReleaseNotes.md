@@ -302,6 +302,13 @@ Makes programs 10x faster by doing Special New Thing.
 
 * Added assembler and code generation support for the `AVX10_V2_AUX`
   instruction set.
+* Non-temporal stores (`!nontemporal`) now keep the ordering of ordinary
+  stores, as LangRef documents. A new IR pass inserts an `sfence` after them
+  before any operation that may synchronize with another thread, and before
+  returns. An `sfence` the code already has after the stores counts, so it
+  isn't doubled. An `sfence` inside a loop runs on every iteration, which is
+  slow; `-pass-remarks=x86-fence-nontemporal-stores` reports each inserted
+  fence and whether it is inside a loop.
 
 ### Changes to the OCaml bindings
 
