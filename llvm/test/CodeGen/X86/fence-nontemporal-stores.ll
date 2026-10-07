@@ -382,6 +382,38 @@ catch_bb:
   catchret from %cp to label %cont
 }
 
+; A cleanupret that unwinds to a catchswitch gets its fence inside the cleanup
+; funclet: the catchswitch has to stay the first non-PHI instruction.
+define void @test_cleanupret_to_catchswitch(ptr %p, i32 %v) personality ptr @__CxxFrameHandler3 {
+; CHECK-LABEL: @test_cleanupret_to_catchswitch(
+; CHECK:       cleanup:
+; CHECK-NEXT:    [[CLP:%.*]] = cleanuppad within none []
+; CHECK-NEXT:    store i32 [[V:%.*]], ptr [[P:%.*]], align 4, !nontemporal [[META0]]
+; CHECK-NEXT:    call void @llvm.x86.sse.sfence()
+; CHECK-NEXT:    cleanupret from [[CLP]] unwind label [[CS_BB:%.*]]
+; CHECK:       cs_bb:
+; CHECK-NEXT:    [[CS:%.*]] = catchswitch within none [label %catch_bb] unwind to caller
+;
+entry:
+  invoke void @sync_call()
+          to label %cont unwind label %cleanup
+
+cleanup:
+  %clp = cleanuppad within none []
+  store i32 %v, ptr %p, align 4, !nontemporal !0
+  cleanupret from %clp unwind label %cs_bb
+
+cs_bb:
+  %cs = catchswitch within none [label %catch_bb] unwind to caller
+
+catch_bb:
+  %cp = catchpad within %cs []
+  catchret from %cp to label %cont
+
+cont:
+  ret void
+}
+
 ; The fences are needed for correctness, so the pass also runs on optnone
 ; functions.
 define void @test_optnone(ptr %p, i32 %v) #0 {

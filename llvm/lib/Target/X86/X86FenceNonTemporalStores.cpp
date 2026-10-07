@@ -73,11 +73,13 @@ static bool isNonTemporalFence(const Instruction &I) {
 /// Returns true if I is a potential cross-thread synchronization point, or
 /// which might return to a caller (either via return or throwing).
 ///
-/// InvokeInst is handled as a special case, because I.mayThrow() may return
-/// false for it, yet true for a CatchSwitchInst unwind destination, which
-/// cannot have non-PHI instructions preceeding it.
+/// InvokeInst and CleanupReturnInst are handled as special cases, because
+/// I.mayThrow() may return false for them, yet true for a CatchSwitchInst
+/// unwind destination, which cannot have non-PHI instructions preceding it.
+/// Fencing before the unwinding terminator keeps the catchswitch block clean.
 static bool isSyncOrReturnPoint(const Instruction &I) {
-  return isa<ReturnInst, InvokeInst>(&I) || I.maySynchronize() || I.mayThrow();
+  return isa<ReturnInst, InvokeInst, CleanupReturnInst>(&I) ||
+         I.maySynchronize() || I.mayThrow();
 }
 
 static bool containsNonTemporalStores(Function &F) {
