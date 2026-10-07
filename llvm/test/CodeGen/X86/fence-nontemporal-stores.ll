@@ -382,4 +382,18 @@ catch_bb:
   catchret from %cp to label %cont
 }
 
+; The fences are needed for correctness, so the pass also runs on optnone
+; functions.
+define void @test_optnone(ptr %p, i32 %v) #0 {
+; CHECK-LABEL: @test_optnone(
+; CHECK-NEXT:    store i32 [[V:%.*]], ptr [[P:%.*]], align 4, !nontemporal [[META0]]
+; CHECK-NEXT:    call void @llvm.x86.sse.sfence()
+; CHECK-NEXT:    ret void
+;
+  store i32 %v, ptr %p, align 4, !nontemporal !0
+  ret void
+}
+
+attributes #0 = { noinline optnone }
+
 !0 = !{i32 1}

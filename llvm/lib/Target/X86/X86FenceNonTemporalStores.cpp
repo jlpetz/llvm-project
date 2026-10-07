@@ -198,8 +198,8 @@ public:
   X86FenceNonTemporalStoresLegacy() : FunctionPass(ID) {}
 
   bool runOnFunction(Function &F) override {
-    if (skipFunction(F))
-      return false;
+    // No skipFunction: the fences are needed for correctness, including in
+    // optnone functions.
     auto *TPC = getAnalysisIfAvailable<TargetPassConfig>();
     const X86Subtarget *ST =
         TPC ? &TPC->getTM<X86TargetMachine>().getSubtarget<X86Subtarget>(F)
